@@ -1,0 +1,45 @@
+name: Deploy to VPS
+
+# Auto-deploy: every push to main rebuilds the Docker stack on the server.
+# Also runnable manually from the Actions tab (workflow_dispatch).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never run two deploys at once; let an in-flight one finish.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build & restart on VPS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 167.233.39.254
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 20m
+          script: |
+            set -euo pipefail
+            cd /opt/erp-mini
+            echo "→ Pulling latest main"
+            git fetch --prune origin main
+            git reset --hard origin/main
+            # Prod runs Postgres; the committed schema.prisma is SQLite for local
+            # dev. Flip the provider for the build (re-applied each deploy because
+            # reset --hard reverts it).
+            sed -i 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma
+            echo "→ Building & starting containers"
+            docker compose -f docker-compose.prod.yml up -d --build
+            echo "→ Pruning old images"
+            docker image prune -f
+            echo "→ Health check"
+            for i in $(seq 1 10); do
+              if curl -fsS -o /dev/null http://localhost/; then echo "✓ App responding"; break; fi
+              echo "waiting for app... ($i)"; sleep 3
+            done

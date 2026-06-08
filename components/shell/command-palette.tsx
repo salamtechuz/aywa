@@ -102,13 +102,13 @@ export function CommandPaletteTrigger() {
       <Button
         variant="outline"
         onClick={() => setOpen(true)}
-        className="h-9 w-full max-w-md justify-between gap-3 text-muted-foreground font-normal"
+        className="h-9 w-full min-w-0 max-w-md justify-between gap-3 text-muted-foreground font-normal"
       >
-        <span className="flex items-center gap-2">
-          <Search className="h-4 w-4" />
-          <span className="text-sm">{tTop("jumpToAnything")}</span>
+        <span className="flex min-w-0 items-center gap-2">
+          <Search className="h-4 w-4 shrink-0" />
+          <span className="truncate text-sm">{tTop("jumpToAnything")}</span>
         </span>
-        <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium">
+        <kbd className="pointer-events-none hidden h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium sm:inline-flex">
           {isMac ? (
             <>
               <span className="text-xs">⌘</span>K

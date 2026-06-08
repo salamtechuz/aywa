@@ -287,6 +287,119 @@ model StockMovement {
   @@index([sourceType, sourceId])
 }
 
+// ----- Inventory configuration (Odoo-style warehouse setup) -----
+// Configuration-only entities: a product's stock stays GLOBAL (StockMovement
+// has no locationId). These model the warehouse setup so the Inventory module
+// mirrors Odoo's Configuration menu. Like Product they carry `workspaceId` for
+// scoping with no DB-level FK to Workspace; string-enums are TEXT validated in
+// the app layer (no native enums, for SQLite/Postgres parity).
+
+/// A physical warehouse / site. `code` is the short handle (e.g. "WH") shown on
+/// its locations and operation types.
+model Warehouse {
+  id          String   @id @default(cuid())
+  workspaceId String
+  code        String
+  name        String
+  address     String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  locations      Location[]
+  operationTypes OperationType[]
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId, active])
+}
+
+/// A storage policy bucket (Odoo "Storage Category"): soft constraints on what
+/// and how much may live in a location. Config-only — not yet enforced.
+model StorageCategory {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  /// Max number of distinct products allowed; null = unlimited.
+  capacity    Int?
+  /// Max total weight (kg) permitted; null = unlimited.
+  maxWeight   Float?
+  /// Whether putaway may auto-route new products here. UI hint only.
+  allowNew    Boolean  @default(true)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  locations Location[]
+
+  @@index([workspaceId, active])
+}
+
+/// A storage location. Optionally belongs to a warehouse and may carry a
+/// storage category. `type` mirrors Odoo's location usage taxonomy.
+model Location {
+  id                String   @id @default(cuid())
+  workspaceId       String
+  name              String
+  /// INTERNAL | SUPPLIER | CUSTOMER | INVENTORY | TRANSIT | VIEW
+  type              String   @default("INTERNAL")
+  /// Short barcode-ish handle, unique per workspace (e.g. "WH-STOCK").
+  code              String
+  warehouseId       String?
+  warehouse         Warehouse?       @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  storageCategoryId String?
+  storageCategory   StorageCategory? @relation(fields: [storageCategoryId], references: [id], onDelete: SetNull)
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId, type])
+  @@index([workspaceId, warehouseId])
+}
+
+/// An operation type (Odoo "Picking Type"): the template for receipts,
+/// deliveries, and internal transfers. `type` drives the icon + default flow.
+model OperationType {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  /// RECEIPT | DELIVERY | INTERNAL
+  type        String   @default("RECEIPT")
+  /// Short sequence prefix, unique per workspace (e.g. "WH/IN").
+  code        String
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId, type])
+}
+
+/// A unit of measure (Odoo "uom.uom", merged with packagings). `factor` is how
+/// many of the category's reference unit one of this contains (KG → 1000 g,
+/// "Pack of 6" → 6 Units); `referenceUnit` is that base unit's display name
+/// (empty for a category's own reference unit). Config-only — not yet wired to
+/// product pricing/stock conversions.
+model UnitOfMeasure {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  name          String
+  /// UNIT | WEIGHT | LENGTH | VOLUME | TIME | PACKAGING (TEXT, app-validated)
+  category      String   @default("UNIT")
+  /// How many reference units one of this contains. 1 for a reference unit.
+  factor        Float    @default(1)
+  /// Display name of the reference unit (e.g. "g"); empty for reference units.
+  referenceUnit String?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, category])
+}
+
 /// A tracked vehicle / asset in the logistics fleet. `lastLat`/`lastLng`/
 /// `lastSpeed`/`lastSeenAt` are a denormalized cache of the most recent
 /// VehiclePosition row — treat the VehiclePosition ledger as authoritative.

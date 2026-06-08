@@ -45,7 +45,7 @@ export function WorkspaceSwitcher({
             variant="ghost"
             role="combobox"
             aria-expanded={open}
-            className="h-9 gap-2 px-2 max-w-[220px] justify-between"
+            className="h-9 gap-2 px-2 max-w-[130px] sm:max-w-[220px] justify-between"
           >
             <div className="flex items-center gap-2 min-w-0">
               <div className="h-6 w-6 rounded bg-primary/10 text-primary flex items-center justify-center text-xs font-bold shrink-0">

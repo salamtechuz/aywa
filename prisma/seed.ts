@@ -96,6 +96,11 @@ async function main() {
   await db.manufacturingOrder.deleteMany({ where: { workspaceId: WORKSPACE } });
   await db.bomComponent.deleteMany({ where: { bom: { workspaceId: WORKSPACE } } });
   await db.bom.deleteMany({ where: { workspaceId: WORKSPACE } });
+  await db.location.deleteMany({ where: { workspaceId: WORKSPACE } });
+  await db.operationType.deleteMany({ where: { workspaceId: WORKSPACE } });
+  await db.storageCategory.deleteMany({ where: { workspaceId: WORKSPACE } });
+  await db.warehouse.deleteMany({ where: { workspaceId: WORKSPACE } });
+  await db.unitOfMeasure.deleteMany({ where: { workspaceId: WORKSPACE } });
   await db.product.deleteMany({ where: { workspaceId: WORKSPACE } });
   await db.journalEntryLine.deleteMany({ where: { entry: { workspaceId: WORKSPACE } } });
   await db.journalEntry.deleteMany({ where: { workspaceId: WORKSPACE } });
@@ -353,6 +358,81 @@ async function main() {
         },
       });
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // INVENTORY CONFIGURATION (Odoo-style warehouse setup) — config-only; does
+  // not touch the StockMovement ledger above (stock stays global per product).
+  // -----------------------------------------------------------------------
+  console.log("→ Seeding inventory configuration");
+  const whMain = await db.warehouse.create({
+    data: { workspaceId: WORKSPACE, code: "WH", name: "San Francisco DC", address: "1 Market St, San Francisco, CA" },
+  });
+  const whEast = await db.warehouse.create({
+    data: { workspaceId: WORKSPACE, code: "WH2", name: "New Jersey Hub", address: "200 Dock Rd, Newark, NJ" },
+  });
+
+  const scBulk = await db.storageCategory.create({
+    data: { workspaceId: WORKSPACE, name: "Bulk", capacity: 1000, maxWeight: 5000, allowNew: true },
+  });
+  const scFragile = await db.storageCategory.create({
+    data: { workspaceId: WORKSPACE, name: "Fragile", capacity: 200, maxWeight: 500, allowNew: true },
+  });
+  const scCold = await db.storageCategory.create({
+    data: { workspaceId: WORKSPACE, name: "Cold chain", capacity: 300, maxWeight: 1500, allowNew: false },
+  });
+
+  const LOCATIONS: {
+    code: string;
+    name: string;
+    type: string;
+    warehouseId: string | null;
+    storageCategoryId: string | null;
+  }[] = [
+    { code: "WH-STOCK", name: "WH/Stock", type: "INTERNAL", warehouseId: whMain.id, storageCategoryId: scBulk.id },
+    { code: "WH-INPUT", name: "WH/Input", type: "INTERNAL", warehouseId: whMain.id, storageCategoryId: null },
+    { code: "WH-OUTPUT", name: "WH/Output", type: "INTERNAL", warehouseId: whMain.id, storageCategoryId: null },
+    { code: "WH-QC", name: "WH/Quality control", type: "INTERNAL", warehouseId: whMain.id, storageCategoryId: scFragile.id },
+    { code: "WH2-STOCK", name: "WH2/Stock", type: "INTERNAL", warehouseId: whEast.id, storageCategoryId: scCold.id },
+    { code: "VEND", name: "Partners/Vendors", type: "SUPPLIER", warehouseId: null, storageCategoryId: null },
+    { code: "CUST", name: "Partners/Customers", type: "CUSTOMER", warehouseId: null, storageCategoryId: null },
+    { code: "INV-LOSS", name: "Virtual/Inventory adjustment", type: "INVENTORY", warehouseId: null, storageCategoryId: null },
+    { code: "TRANSIT", name: "Virtual/Inter-warehouse transit", type: "TRANSIT", warehouseId: null, storageCategoryId: null },
+  ];
+  for (const l of LOCATIONS) {
+    await db.location.create({ data: { workspaceId: WORKSPACE, ...l } });
+  }
+
+  const OPS: { code: string; name: string; type: string; warehouseId: string }[] = [
+    { code: "WH-IN", name: "Receipts", type: "RECEIPT", warehouseId: whMain.id },
+    { code: "WH-OUT", name: "Delivery Orders", type: "DELIVERY", warehouseId: whMain.id },
+    { code: "WH-INT", name: "Internal Transfers", type: "INTERNAL", warehouseId: whMain.id },
+    { code: "WH2-IN", name: "Receipts (NJ)", type: "RECEIPT", warehouseId: whEast.id },
+    { code: "WH2-OUT", name: "Delivery Orders (NJ)", type: "DELIVERY", warehouseId: whEast.id },
+  ];
+  for (const o of OPS) {
+    await db.operationType.create({ data: { workspaceId: WORKSPACE, ...o } });
+  }
+
+  const UOMS: { name: string; category: string; factor: number; referenceUnit: string | null }[] = [
+    { name: "Units", category: "UNIT", factor: 1, referenceUnit: null },
+    { name: "Dozen", category: "UNIT", factor: 12, referenceUnit: "Units" },
+    { name: "g", category: "WEIGHT", factor: 1, referenceUnit: null },
+    { name: "KG", category: "WEIGHT", factor: 1000, referenceUnit: "g" },
+    { name: "MT", category: "WEIGHT", factor: 1000, referenceUnit: "KG" },
+    { name: "ml", category: "VOLUME", factor: 1, referenceUnit: null },
+    { name: "L", category: "VOLUME", factor: 1000, referenceUnit: "ml" },
+    { name: "cm", category: "LENGTH", factor: 1, referenceUnit: null },
+    { name: "m", category: "LENGTH", factor: 100, referenceUnit: "cm" },
+    { name: "km", category: "LENGTH", factor: 1000, referenceUnit: "m" },
+    { name: "Hours", category: "TIME", factor: 1, referenceUnit: null },
+    { name: "Days", category: "TIME", factor: 8, referenceUnit: "Hours" },
+    { name: "Pack of 6", category: "PACKAGING", factor: 6, referenceUnit: "Units" },
+    { name: "CTN", category: "PACKAGING", factor: 20, referenceUnit: "KG" },
+    { name: "BAG", category: "PACKAGING", factor: 25, referenceUnit: "KG" },
+  ];
+  for (const u of UOMS) {
+    await db.unitOfMeasure.create({ data: { workspaceId: WORKSPACE, ...u } });
   }
 
   // -----------------------------------------------------------------------

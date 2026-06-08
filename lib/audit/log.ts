@@ -25,6 +25,11 @@ export type AuditEntityType =
   | "MANUFACTURING_ORDER"
   | "BOM"
   | "VEHICLE"
+  | "WAREHOUSE"
+  | "LOCATION"
+  | "OPERATION_TYPE"
+  | "STORAGE_CATEGORY"
+  | "UNIT_OF_MEASURE"
   | "OTHER";
 
 export type AuditInput = {

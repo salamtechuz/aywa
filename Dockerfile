@@ -16,7 +16,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 FROM base AS deps
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
-RUN npm ci
+RUN npm ci --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
 
 # ---- builder: compile the Next.js production build ----
 FROM base AS builder

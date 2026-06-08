@@ -53,7 +53,7 @@ services:
       - erp-mini-uploads:/app/public/uploads
     # Sync the schema to Postgres on every boot (idempotent), then serve.
     command: >
-      sh -c "node_modules/.bin/prisma db push --skip-generate --accept-data-loss
+      sh -c "node_modules/.bin/prisma migrate deploy
       && node_modules/.bin/next start -H 0.0.0.0 -p 3000"
 
   caddy:

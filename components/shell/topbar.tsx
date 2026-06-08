@@ -54,13 +54,13 @@ export function Topbar({
         />
         <SheetContent side="left" className="p-0 w-64">
           <SheetTitle className="sr-only">{tNav("navigation")}</SheetTitle>
-          <div className="md:hidden">
-            <Sidebar
-              workspaceName={active.name}
-              workspaceSlug={active.slug}
-              workspacePlan={active.plan}
-            />
-          </div>
+          <Sidebar
+            mobile
+            onNavigate={() => setMobileOpen(false)}
+            workspaceName={active.name}
+            workspaceSlug={active.slug}
+            workspacePlan={active.plan}
+          />
         </SheetContent>
       </Sheet>
 
@@ -68,7 +68,7 @@ export function Topbar({
 
       <Separator orientation="vertical" className="h-6 hidden md:block" />
 
-      <div className="flex-1 flex justify-center max-w-md mx-auto">
+      <div className="flex-1 min-w-0 flex justify-center max-w-md mx-auto">
         <CommandPaletteTrigger />
       </div>
 

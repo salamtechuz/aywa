@@ -17,6 +17,7 @@ import {
 
 const ENTRY_AFFECTING_SALES = new Set(["INVOICED"]);
 const ENTRY_AFFECTING_PURCHASE = new Set(["BILLED"]);
+const ENTRY_AFFECTING_MANUFACTURING = new Set(["DONE"]);
 
 async function existingSourceEntry(
   workspaceId: string,
@@ -141,6 +142,64 @@ export async function syncEntryForPurchaseOrder(
     }
   } catch (err) {
     console.error("[accounting] syncEntryForPurchaseOrder failed", err);
+  }
+}
+
+/**
+ * Call after a Manufacturing Order's status changes. On DONE: capitalize the
+ * production cost into inventory — Dr Inventory / Cr Cost of Goods Sold. The
+ * components consumed by the build were expensed when purchased; production
+ * moves that value into the finished-goods asset. Idempotent (keyed by
+ * sourceType+sourceId); the entry is removed when the order leaves DONE.
+ */
+export async function syncEntryForManufacturingOrder(
+  workspaceId: string,
+  orderId: string,
+  oldStatus: string | null,
+  newStatus: string,
+  ownerName?: string,
+) {
+  try {
+    const was = oldStatus !== null && ENTRY_AFFECTING_MANUFACTURING.has(oldStatus);
+    const is = ENTRY_AFFECTING_MANUFACTURING.has(newStatus);
+    if (was === is) return;
+
+    if (is) {
+      if (await existingSourceEntry(workspaceId, "MANUFACTURING_ORDER", orderId)) return;
+      const order = await db.manufacturingOrder.findFirst({
+        where: { id: orderId, workspaceId },
+        select: { number: true, quantity: true, product: { select: { cost: true } } },
+      });
+      if (!order) return;
+      const amount = round2((order.product?.cost ?? 0) * order.quantity);
+      if (amount <= 0) return; // no unit cost set — nothing meaningful to post
+
+      const [ws, journal, inventory, cogs] = await Promise.all([
+        db.workspace.findUnique({ where: { id: workspaceId }, select: { defaultCurrency: true } }),
+        getJournalByType(workspaceId, "GENERAL"),
+        getLedgerAccountByCode(workspaceId, DEFAULT_ACCOUNTS.INVENTORY),
+        getLedgerAccountByCode(workspaceId, DEFAULT_ACCOUNTS.EXPENSE),
+      ]);
+      if (!journal || !inventory || !cogs) return; // chart of accounts not set up
+
+      await createPostedEntry({
+        workspaceId,
+        journalId: journal.id,
+        currency: ws?.defaultCurrency ?? "USD",
+        reference: `Production ${order.number}`,
+        sourceType: "MANUFACTURING_ORDER",
+        sourceId: orderId,
+        ownerName,
+        lines: [
+          { accountId: inventory.id, debit: amount, credit: 0, description: `Production ${order.number}` },
+          { accountId: cogs.id, debit: 0, credit: amount, description: `Production ${order.number}` },
+        ],
+      });
+    } else {
+      await removeSourceEntry(workspaceId, "MANUFACTURING_ORDER", orderId);
+    }
+  } catch (err) {
+    console.error("[accounting] syncEntryForManufacturingOrder failed", err);
   }
 }
 

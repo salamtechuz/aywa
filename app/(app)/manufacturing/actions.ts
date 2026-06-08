@@ -13,12 +13,14 @@ import {
   nextManufacturingOrderNumber,
 } from "@/lib/manufacturing/queries";
 import { syncStockForManufacturingOrder } from "@/lib/manufacturing/sync";
+import { syncEntryForManufacturingOrder } from "@/lib/accounting/auto";
 
 const StatusEnum = z.enum(ALL_MO_STATUSES);
 
 function revalidateMo() {
   revalidatePath("/manufacturing");
   revalidatePath("/inventory");
+  revalidatePath("/accounting");
   revalidatePath("/dashboard");
 }
 
@@ -64,6 +66,13 @@ export async function moveManufacturingOrder(input: z.infer<typeof MoveSchema>) 
 
   if (before && before.status !== status) {
     await syncStockForManufacturingOrder(
+      ws.id,
+      orderId,
+      before.status,
+      status,
+      user?.name ?? user?.email ?? undefined,
+    );
+    await syncEntryForManufacturingOrder(
       ws.id,
       orderId,
       before.status,
@@ -149,6 +158,13 @@ export async function createManufacturingOrder(formData: FormData) {
       "DONE",
       user?.name ?? user?.email ?? undefined,
     );
+    await syncEntryForManufacturingOrder(
+      ws.id,
+      created.id,
+      null,
+      "DONE",
+      user?.name ?? user?.email ?? undefined,
+    );
   }
 
   await logAudit({
@@ -216,6 +232,13 @@ export async function updateManufacturingOrder(formData: FormData) {
       rest.status,
       user?.name ?? user?.email ?? undefined,
     );
+    await syncEntryForManufacturingOrder(
+      ws.id,
+      id,
+      before.status,
+      rest.status,
+      user?.name ?? user?.email ?? undefined,
+    );
   }
   revalidateMo();
   return { ok: true as const };
@@ -258,6 +281,13 @@ export async function advanceManufacturingOrder(id: string) {
     next,
     user?.name ?? user?.email ?? undefined,
   );
+  await syncEntryForManufacturingOrder(
+    ws.id,
+    id,
+    order.status,
+    next,
+    user?.name ?? user?.email ?? undefined,
+  );
   await logAudit({
     action: "STATUS_CHANGE",
     entityType: "MANUFACTURING_ORDER",
@@ -282,6 +312,13 @@ export async function deleteManufacturingOrder(id: string) {
   // Reverse any committed stock before removing the order so the ledger stays
   // consistent (no-op unless it was DONE).
   await syncStockForManufacturingOrder(
+    ws.id,
+    id,
+    order.status,
+    "CANCELLED",
+    user?.name ?? user?.email ?? undefined,
+  );
+  await syncEntryForManufacturingOrder(
     ws.id,
     id,
     order.status,

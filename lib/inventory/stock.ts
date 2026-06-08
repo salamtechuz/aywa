@@ -235,3 +235,34 @@ export async function getInventorySummary(workspaceId: string): Promise<{
   lowStock.sort((a, b) => a.onHand - a.reorderAt - (b.onHand - b.reorderAt));
   return { value: { totalCost, totalRetail, productCount: products.length }, lowStock };
 }
+
+export type MovementHistoryRow = StockMovementRow & {
+  workspaceId: string;
+  product: { sku: string; name: string; unit: string };
+};
+
+/**
+ * Workspace-wide movement history for the Reporting → Moves History report.
+ * Paginated + optionally filtered by movement type. Returns the page rows plus
+ * the total count (for the pager). Joins the product for display.
+ */
+export async function listAllMovements(
+  workspaceId: string,
+  opts?: { type?: string; take?: number; skip?: number },
+): Promise<{ rows: MovementHistoryRow[]; total: number }> {
+  const where = {
+    workspaceId,
+    ...(opts?.type ? { type: opts.type } : {}),
+  };
+  const [rows, total] = await Promise.all([
+    db.stockMovement.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: opts?.take ?? 100,
+      skip: opts?.skip ?? 0,
+      include: { product: { select: { sku: true, name: true, unit: true } } },
+    }),
+    db.stockMovement.count({ where }),
+  ]);
+  return { rows, total };
+}

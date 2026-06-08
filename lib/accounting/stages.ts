@@ -67,6 +67,7 @@ export const DEFAULT_ACCOUNTS = {
   REVENUE: "4000", // Sales Revenue (INCOME)
   PAYABLE: "2100", // Accounts Payable (LIABILITY)
   EXPENSE: "5000", // Cost of Goods Sold / Purchases (EXPENSE)
+  INVENTORY: "1200", // Inventory (ASSET) — finished goods capitalized on production
 } as const;
 
 /// Money formatter with cent precision. Defaults to USD; pass the workspace or

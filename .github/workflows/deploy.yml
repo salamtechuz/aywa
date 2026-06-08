@@ -3,14 +3,33 @@ name: Deploy to VPS
 # Two environments on ONE server, isolated Docker stacks:
 #   push to dev  → DEV  stack  → http://167.233.39.254:8081  (dir /opt/erp-mini-dev)
 #   push to main → PROD stack  → http://167.233.39.254       (dir /opt/erp-mini)
+# A `typecheck` job gates BOTH deploys: if `tsc` fails, nothing is deployed and
+# the currently-running container keeps serving.
 on:
   push:
     branches: [dev, main]
   workflow_dispatch:
 
 jobs:
+  typecheck:
+    name: Type check (tsc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Type check
+        run: npx tsc --noEmit
+
   deploy-dev:
     name: Deploy DEV (:8081)
+    needs: typecheck
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     concurrency:
@@ -42,6 +61,7 @@ jobs:
 
   deploy-prod:
     name: Deploy PROD (:80)
+    needs: typecheck
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     concurrency:

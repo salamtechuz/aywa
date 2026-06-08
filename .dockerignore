@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+.gitignore
+dev.db
+*.db
+*.db-journal
+.env
+.env.*
+!.env.example
+public/uploads
+npm-debug.log*
+yarn-error.log*
+.DS_Store
+*.md
+docker-compose.yml

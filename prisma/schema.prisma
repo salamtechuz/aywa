@@ -1,0 +1,816 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // Dev runs SQLite (DATABASE_URL=file:./dev.db). Prod is Postgres — flip the
+  // `provider` to "postgresql", set DATABASE_URL to your Neon/Supabase URL,
+  // and run `prisma migrate deploy`. The models below avoid SQLite-only and
+  // Postgres-only features (no native enums, no JSON columns) so the same
+  // schema works against both engines.
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ----- Auth.js + multi-tenant primitives -----
+// These models back the Prisma adapter for Auth.js (User/Account/Session/
+// VerificationToken) plus our own Workspace + Membership for multi-tenancy.
+
+model User {
+  id            String       @id @default(cuid())
+  email         String       @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  passwordHash  String?      // bcrypt hash; null for OAuth-only users
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  accounts    Account[]
+  sessions    Session[]
+  memberships Membership[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Workspace {
+  id          String       @id @default(cuid())
+  name        String
+  slug        String       @unique
+  plan        String       @default("FREE") // FREE | PRO | ENTERPRISE
+  /// URL or storageKey of the workspace logo (resolved via publicUrlFor).
+  /// Used in the sidebar header and on PDF documents.
+  logo        String?
+  /// Persisted accent color in OKLCH format, e.g. "oklch(0.48 0.20 265)".
+  /// Overrides the localStorage-only client-side value; SSR applies on every page.
+  accentColor String?
+  /// Two-letter ISO currency for default PO/SO currency on this workspace.
+  defaultCurrency String   @default("USD")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  memberships Membership[]
+  invitations Invitation[]
+  apiTokens   ApiToken[]
+  webhookEndpoints WebhookEndpoint[]
+}
+
+/// Pending invitations to join a workspace. The recipient receives a magic
+/// link with the `token` field; clicking it consumes the invite and creates
+/// a User + Membership.
+model Invitation {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  email        String
+  role         String   @default("MEMBER") // OWNER | ADMIN | MEMBER | VIEWER
+  token        String   @unique
+  invitedBy    String?
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  createdAt    DateTime @default(now())
+
+  @@unique([workspaceId, email])
+  @@index([workspaceId, acceptedAt])
+}
+
+/// Bearer-auth tokens for the public REST API (/api/v1/*). The `prefix`
+/// is the visible first 8 chars; the hash is what we compare against.
+model ApiToken {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  prefix      String   // first 8 chars of the token, shown in UI
+  tokenHash   String   @unique // bcrypt hash of the full token
+  /// READ | WRITE — write implies read.
+  scope       String   @default("READ")
+  lastUsedAt  DateTime?
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  revokedAt   DateTime?
+
+  @@index([workspaceId, revokedAt])
+}
+
+/// Outbound webhook destinations. We POST to `url` whenever any of the
+/// subscribed events fires, signed with `secret` (HMAC-SHA256 of the body
+/// in the `aywa-signature` header). Surfaced in Settings → Webhooks.
+model WebhookEndpoint {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  url         String
+  secret      String
+  /// Comma-separated event types: deal.won, deal.lost, order.delivered, …
+  events      String
+  active      Boolean  @default(true)
+  lastFiredAt DateTime?
+  lastStatus  Int?
+  createdBy   String?
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, active])
+}
+
+model Membership {
+  id          String   @id @default(cuid())
+  userId      String
+  workspaceId String
+  role        String   @default("MEMBER") // OWNER | ADMIN | MEMBER | VIEWER
+  createdAt   DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+}
+
+// ----- CRM (Phase 2: first real module) -----
+// SQLite has no native enums; we store as TEXT and validate at the app layer.
+
+model Contact {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  email       String?
+  phone       String?
+  company     String?
+  type        String   @default("PERSON") // "PERSON" | "COMPANY"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deals         Deal[]
+  salesOrders   SalesOrder[]
+  subscriptions Subscription[]
+  projects      Project[]
+
+  @@index([workspaceId])
+}
+
+model SalesOrder {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  number       String    // SO-0001
+  customerId   String?
+  customer     Contact?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  status       String    @default("DRAFT") // DRAFT | SENT | CONFIRMED | DELIVERED | INVOICED | CANCELLED
+  amount       Float     @default(0)
+  currency     String    @default("USD")
+  orderDate    DateTime  @default(now())
+  expectedDate DateTime?
+  notes        String?
+  ownerName    String?
+  position     Int       @default(0)
+  /// Stripe Checkout Session ID after a "Pay this invoice" link is generated.
+  stripeSessionId String?
+  /// Set when the customer completes payment (via Stripe webhook).
+  stripePaidAt    DateTime?
+  /// Token for the public customer portal magic link (also serves as the
+  /// "view this quote/invoice on the web" URL for unauthenticated customers).
+  portalToken     String?  @unique
+
+  lines SalesOrderLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, number])
+  @@index([workspaceId, status])
+}
+
+model SalesOrderLine {
+  id          String     @id @default(cuid())
+  orderId     String
+  order       SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String?
+  product     Product?   @relation(fields: [productId], references: [id], onDelete: SetNull)
+  description String
+  quantity    Float      @default(1)
+  unitPrice   Float      @default(0)
+  discount    Float      @default(0) // percent 0-100
+  position    Int        @default(0)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([orderId])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  workspaceId String
+  sku         String
+  name        String
+  description String?
+  category    String?
+  unit        String   @default("each") // each | kg | hour | license
+  price       Float    @default(0)
+  cost        Float    @default(0)
+  /// Legacy cached count. New code reads `stockOnHand` via a sum of
+  /// StockMovement rows; this column is kept as a denormalized fallback and
+  /// is updated by application code when movements are written.
+  stockOnHand Int      @default(0)
+  reorderAt   Int      @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lines         SalesOrderLine[]
+  purchaseLines PurchaseOrderLine[]
+  movements     StockMovement[]
+  subscriptions Subscription[]
+  bomsProduced        Bom[]
+  bomComponents       BomComponent[]
+  manufacturingOrders ManufacturingOrder[]
+
+  @@unique([workspaceId, sku])
+  @@index([workspaceId, active])
+}
+
+/// Append-only ledger of every change to a product's on-hand quantity.
+/// Quantity is signed (positive for IN, negative for OUT); the `type` field
+/// is the human label, and `sourceType` + `sourceId` link back to the doc
+/// that caused the change (sales order, purchase order, manual adjustment).
+model StockMovement {
+  id          String   @id @default(cuid())
+  workspaceId String
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// IN | OUT | ADJUSTMENT | TRANSFER | INITIAL
+  type        String
+  /// Signed quantity. IN/INITIAL are positive, OUT is negative, ADJUSTMENT
+  /// can be either, TRANSFER pairs use opposite signs across two rows.
+  quantity    Float
+  reason      String?
+  /// SALES_ORDER | PURCHASE_ORDER | MANUAL | INITIAL_LOAD
+  sourceType  String
+  sourceId    String?
+  ownerName   String?
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, productId])
+  @@index([workspaceId, createdAt])
+  @@index([sourceType, sourceId])
+}
+
+/// A tracked vehicle / asset in the logistics fleet. `lastLat`/`lastLng`/
+/// `lastSpeed`/`lastSeenAt` are a denormalized cache of the most recent
+/// VehiclePosition row — treat the VehiclePosition ledger as authoritative.
+/// Like Product, this carries `workspaceId` for scoping but has no DB-level
+/// FK to Workspace (the demo workspace ws_acme may not be a real row).
+model Vehicle {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  plate       String?
+  /// TRUCK | VAN | CAR | BIKE | OTHER
+  type        String   @default("TRUCK")
+  driverName  String?
+  phone       String?
+  /// ACTIVE | IDLE | MAINTENANCE | OFFLINE
+  status      String   @default("OFFLINE")
+  notes       String?
+  /// Denormalized cache of the latest VehiclePosition (see positions[]).
+  lastLat     Float?
+  lastLng     Float?
+  lastSpeed   Float?
+  lastSeenAt  DateTime?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  positions   VehiclePosition[]
+
+  @@index([workspaceId, active])
+}
+
+/// Append-only ledger of GPS pings for a vehicle. The latest row by
+/// `recordedAt` is the vehicle's current location; older rows form its track.
+model VehiclePosition {
+  id          String   @id @default(cuid())
+  workspaceId String
+  vehicleId   String
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  lat         Float
+  lng         Float
+  speed       Float?   // km/h
+  heading     Float?   // degrees, 0-359
+  recordedAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, vehicleId, recordedAt])
+  @@index([vehicleId, recordedAt])
+}
+
+model Deal {
+  id                String    @id @default(cuid())
+  workspaceId       String
+  name              String
+  kind              String    @default("OPPORTUNITY") // "LEAD" | "OPPORTUNITY"
+  value             Float     @default(0)
+  currency          String    @default("USD")
+  stage             String    @default("NEW") // NEW | QUALIFIED | PROPOSAL | NEGOTIATION | WON | LOST
+  probability       Int       @default(20)
+  expectedCloseDate DateTime?
+  ownerName         String?
+  ownerEmail        String?
+  notes             String?
+  position          Int       @default(0)
+  contactId         String?
+  contact           Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  activities Activity[]
+  tags       DealTag[]
+
+  @@index([workspaceId, stage])
+  @@index([workspaceId, kind])
+}
+
+model Tag {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  color       String   @default("slate") // slate | red | amber | emerald | sky | violet | rose
+  createdAt   DateTime @default(now())
+
+  deals DealTag[]
+
+  @@unique([workspaceId, name])
+}
+
+model DealTag {
+  dealId String
+  tagId  String
+  deal   Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([dealId, tagId])
+  @@index([tagId])
+}
+
+model Activity {
+  id          String    @id @default(cuid())
+  workspaceId String
+  dealId      String?
+  deal        Deal?     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  type        String    // NOTE | CALL | EMAIL | MEETING | TASK
+  title       String
+  body        String?
+  dueAt       DateTime?
+  doneAt      DateTime?
+  ownerName   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId, dealId])
+  @@index([dealId, createdAt])
+}
+
+/// Recurring revenue contracts. MRR is computed live from this table:
+/// `SUM(unitPrice * quantity / billingPeriodMonths)` over rows where
+/// status = "ACTIVE" and (endDate is null OR endDate > now()).
+model Subscription {
+  id                   String   @id @default(cuid())
+  workspaceId          String
+  customerId           String?
+  customer             Contact? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  productId            String?
+  product              Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  name                 String
+  /// MONTHLY | QUARTERLY | YEARLY
+  billingPeriod        String   @default("MONTHLY")
+  /// Convenience integer derived from billingPeriod for MRR math.
+  billingPeriodMonths  Int      @default(1)
+  quantity             Int      @default(1)
+  unitPrice            Float
+  currency             String   @default("USD")
+  /// ACTIVE | PAUSED | CANCELLED
+  status               String   @default("ACTIVE")
+  startDate            DateTime @default(now())
+  endDate              DateTime?
+  nextRenewalDate      DateTime?
+  notes                String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([workspaceId, status])
+}
+
+/// Resend webhook ingestion: one row per sent email, tracking opens/clicks
+/// when Resend posts back to /api/webhooks/resend. Linked to the order or
+/// deal via (entityType, entityId) — same polymorphic shape as attachments.
+model EmailEvent {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  resendId     String   @unique
+  /// ORDER | PO | DEAL | OTHER
+  entityType   String
+  entityId     String?
+  recipient    String
+  subject      String?
+  sentAt       DateTime @default(now())
+  openedAt     DateTime?
+  openCount    Int      @default(0)
+  clickedAt    DateTime?
+  clickCount   Int      @default(0)
+  bouncedAt    DateTime?
+  complainedAt DateTime?
+
+  @@index([workspaceId, entityType, entityId])
+}
+
+/// Append-only history of mutations across the workspace. Written from
+/// server actions via lib/audit/log.ts; surfaced on /settings/audit.
+model AuditLog {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userEmail   String?
+  userName    String?
+  /// CREATE | UPDATE | DELETE | STATUS_CHANGE | SEND | OTHER
+  action      String
+  /// Entity type: DEAL | CUSTOMER | ORDER | PRODUCT | VENDOR | PO | ...
+  entityType  String
+  entityId    String?
+  /// Short human-readable summary, e.g. "Moved deal Acme to NEGOTIATION".
+  summary     String
+  metadata    String?  // optional JSON blob serialised as text
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, entityType, entityId])
+}
+
+// ----- Purchase (Phase A) -----
+
+model Vendor {
+  id            String  @id @default(cuid())
+  workspaceId   String
+  name          String
+  vendorCode    String?
+  email         String?
+  phone         String?
+  contactPerson String?
+  paymentTerms  String? // e.g. "Net 30"
+  currency      String  @default("USD")
+  notes         String?
+  active        Boolean @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  purchaseOrders PurchaseOrder[]
+
+  @@index([workspaceId, active])
+}
+
+model PurchaseOrder {
+  id          String   @id @default(cuid())
+  workspaceId String
+  number      String   // PO-0001
+  vendorId    String?
+  vendor      Vendor?  @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  /// DRAFT | RFQ_SENT | APPROVED | RECEIVED | BILLED | CANCELLED
+  status       String   @default("DRAFT")
+  amount       Float    @default(0)
+  currency     String   @default("USD")
+  orderDate    DateTime @default(now())
+  expectedDate DateTime?
+  receivedDate DateTime?
+  notes        String?
+  ownerName    String?
+  position     Int      @default(0)
+
+  lines PurchaseOrderLine[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, number])
+  @@index([workspaceId, status])
+}
+
+model PurchaseOrderLine {
+  id          String        @id @default(cuid())
+  orderId     String
+  order       PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String?
+  product     Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+  description String
+  quantity    Float         @default(1)
+  unitCost    Float         @default(0)
+  position    Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([orderId])
+}
+
+// ----- HR (Phase C) -----
+
+model Employee {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  name          String
+  email         String?
+  phone         String?
+  title         String?
+  department    String?
+  hireDate      DateTime?
+  /// ACTIVE | INACTIVE | ON_LEAVE
+  status        String   @default("ACTIVE")
+  managerId     String?
+  manager       Employee?  @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: SetNull)
+  reports       Employee[] @relation("EmployeeManager")
+  timeOffRequests TimeOffRequest[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([workspaceId, status])
+}
+
+model TimeOffRequest {
+  id          String   @id @default(cuid())
+  workspaceId String
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  /// VACATION | SICK | PERSONAL | OTHER
+  type        String   @default("VACATION")
+  startDate   DateTime
+  endDate     DateTime
+  /// PENDING | APPROVED | DENIED | CANCELLED
+  status      String   @default("PENDING")
+  reason      String?
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, status])
+  @@index([employeeId, startDate])
+}
+
+// ----- Projects (Phase C) -----
+
+model Project {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  /// ACTIVE | ON_HOLD | COMPLETED | CANCELLED
+  status      String   @default("ACTIVE")
+  customerId  String?
+  customer    Contact? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  ownerName   String?
+  budget      Float?
+  startDate   DateTime?
+  dueDate     DateTime?
+  tasks       Task[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId, status])
+}
+
+model Task {
+  id          String   @id @default(cuid())
+  workspaceId String
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  /// BACKLOG | IN_PROGRESS | REVIEW | DONE
+  status      String   @default("BACKLOG")
+  assigneeName String?
+  dueDate     DateTime?
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId, status])
+  @@index([projectId, status, position])
+}
+
+// Polymorphic attachment: ties a stored file to a Deal, Contact, or SalesOrder
+// via (entityType, entityId). SQLite has no native enum, so entityType is a TEXT
+// validated at the app layer: "DEAL" | "CONTACT" | "ORDER".
+model Attachment {
+  id          String   @id @default(cuid())
+  workspaceId String
+  entityType  String   // "DEAL" | "CONTACT" | "ORDER"
+  entityId    String
+  filename    String   // original upload name
+  storageKey  String   // path or blob key — opaque to consumers
+  mimeType    String
+  size        Int      // bytes
+  uploadedBy  String?  // user email/name
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, entityType, entityId])
+}
+
+// ----- Accounting (Phase D: double-entry core) -----
+// Chart of accounts + journals + balanced journal entries. Like every other
+// module, status/type values are TEXT validated at the app layer (no native
+// enums) and money is stored as Float. Reports (trial balance / P&L / balance
+// sheet) are derived by summing POSTED JournalEntryLine rows — there is no
+// denormalized balance cache; the ledger is authoritative.
+
+/// A single line in the chart of accounts. `type` drives where the account
+/// shows up in reports (ASSET/LIABILITY/EQUITY → balance sheet, INCOME/EXPENSE
+/// → P&L). `code` is the human account number (e.g. "1100").
+/// (Named LedgerAccount to avoid colliding with the Auth.js `Account` model.)
+model LedgerAccount {
+  id          String   @id @default(cuid())
+  workspaceId String
+  code        String   // "1100"
+  name        String   // "Accounts Receivable"
+  /// ASSET | LIABILITY | EQUITY | INCOME | EXPENSE
+  type        String
+  currency    String   @default("USD")
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lines JournalEntryLine[]
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId, type])
+}
+
+/// A book where entries are recorded (Sales, Purchases, Bank, Cash, General).
+/// `type` is informational grouping; auto-generated entries pick a journal by
+/// type (SALE for customer invoices, PURCHASE for vendor bills).
+model Journal {
+  id          String   @id @default(cuid())
+  workspaceId String
+  code        String   // "SAL"
+  name        String   // "Customer Invoices"
+  /// SALE | PURCHASE | BANK | CASH | GENERAL
+  type        String   @default("GENERAL")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  entries JournalEntry[]
+
+  @@unique([workspaceId, code])
+  @@index([workspaceId, type])
+}
+
+/// A balanced double-entry transaction. Sum(debit) must equal sum(credit)
+/// across its lines before it can be POSTED. DRAFT entries are editable and
+/// excluded from reports; only POSTED entries hit the ledger. Auto-generated
+/// entries carry sourceType/sourceId pointing back at the originating doc so
+/// they can be found (and reversed) idempotently.
+model JournalEntry {
+  id          String   @id @default(cuid())
+  workspaceId String
+  journalId   String
+  journal     Journal  @relation(fields: [journalId], references: [id], onDelete: Restrict)
+  number      String   // "JE-0001"
+  date        DateTime @default(now())
+  reference   String?  // memo / external reference
+  /// DRAFT | POSTED | CANCELLED
+  status      String   @default("DRAFT")
+  currency    String   @default("USD")
+  /// MANUAL | SALES_ORDER | PURCHASE_ORDER — null treated as MANUAL.
+  sourceType  String?
+  sourceId    String?
+  postedAt    DateTime?
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lines JournalEntryLine[]
+
+  @@unique([workspaceId, number])
+  @@index([workspaceId, status])
+  @@index([workspaceId, date])
+  @@index([sourceType, sourceId])
+}
+
+/// One leg of a journal entry. Exactly one of debit/credit is non-zero by
+/// convention (both default 0). Deleting the entry cascades its lines; an
+/// account in use cannot be deleted (Restrict via the required relation).
+model JournalEntryLine {
+  id          String   @id @default(cuid())
+  entryId     String
+  entry       JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  accountId   String
+  account     LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  description String?
+  debit       Float    @default(0)
+  credit      Float    @default(0)
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([entryId])
+  @@index([accountId])
+}
+
+// ----- Manufacturing (Phase E: BOMs + production orders) -----
+// A Bill of Materials defines what components are consumed to produce a
+// finished Product, and a ManufacturingOrder executes a BOM for a quantity.
+// On completion the order writes signed StockMovement rows (OUT for each
+// component, IN for the produced good) through the same ledger Sales/Purchase
+// use, so the inventory module stays authoritative. Status is TEXT validated
+// at the app layer (no native enums).
+
+/// A recipe: producing `quantity` units of `product` consumes its components.
+/// Deleting the produced product cascades the BOM; a product used as a
+/// component cannot be deleted (Restrict on BomComponent.product).
+model Bom {
+  id          String   @id @default(cuid())
+  workspaceId String
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  reference   String   // BOM-0001
+  quantity    Float    @default(1) // output units this BOM yields
+  active      Boolean  @default(true)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  components BomComponent[]
+  orders     ManufacturingOrder[]
+
+  @@unique([workspaceId, reference])
+  @@index([workspaceId, productId])
+}
+
+model BomComponent {
+  id        String  @id @default(cuid())
+  bomId     String
+  bom       Bom     @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity  Float   @default(1) // units consumed per BOM output batch
+  position  Int     @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([bomId])
+  @@index([productId])
+}
+
+/// Executes a BOM (or an ad-hoc build) producing `quantity` of `product`.
+/// DONE commits stock movements idempotently (sourceType MANUFACTURING_ORDER);
+/// reverting out of DONE reverses them.
+model ManufacturingOrder {
+  id            String    @id @default(cuid())
+  workspaceId   String
+  number        String    // MO-0001
+  productId     String
+  product       Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  bomId         String?
+  bom           Bom?      @relation(fields: [bomId], references: [id], onDelete: SetNull)
+  quantity      Float     @default(1)
+  /// DRAFT | CONFIRMED | IN_PROGRESS | DONE | CANCELLED
+  status        String    @default("DRAFT")
+  scheduledDate DateTime?
+  completedDate DateTime?
+  ownerName     String?
+  notes         String?
+  position      Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([workspaceId, number])
+  @@index([workspaceId, status])
+}

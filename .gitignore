@@ -33,6 +33,16 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# local SQLite dev database (Postgres is used in prod)
+*.db
+*.db-journal
+
+# scratch / junk
+фывафываю.txt
+
+# user-uploaded files in dev
+/public/uploads/
+
 # vercel
 .vercel
 

@@ -1,0 +1,10 @@
+# IP-only deployment: serve plain HTTP on :80 and proxy to the Next.js app.
+# When you point a domain at this server, replace `:80` with the domain name
+# (e.g. `erp.example.com {`) and Caddy will auto-provision a free HTTPS cert.
+:80 {
+	encode gzip zstd
+	# Disable proxy buffering so Next.js streaming/Suspense works end-to-end.
+	reverse_proxy app:3000 {
+		flush_interval -1
+	}
+}

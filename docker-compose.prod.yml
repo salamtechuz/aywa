@@ -1,11 +1,14 @@
-# Production stack for a single VPS: Postgres + Next.js app + Caddy reverse proxy.
-# Bring up with:  docker compose -f docker-compose.prod.yml up -d --build
-# Secrets/config come from a sibling .env file (NOT committed).
+# Stack for a single VPS: Postgres + Next.js app + Caddy reverse proxy.
+# Used for BOTH environments on the same server, isolated by project name:
+#   PROD:  STACK=erp-mini     HTTP_PORT=80    docker compose -p erp-mini     ... (dir /opt/erp-mini,     branch main)
+#   DEV:   STACK=erp-mini-dev HTTP_PORT=8081  docker compose -p erp-mini-dev ... (dir /opt/erp-mini-dev, branch dev)
+# Volumes/networks are auto-prefixed by the project name, so the two stacks
+# never share data. Secrets/config come from a sibling .env file (NOT committed).
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: erp-mini-postgres
+    container_name: ${STACK:-erp-mini}-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: erp
@@ -23,7 +26,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: erp-mini-app
+    container_name: ${STACK:-erp-mini}-app
     restart: unless-stopped
     depends_on:
       postgres:
@@ -55,13 +58,13 @@ services:
 
   caddy:
     image: caddy:2-alpine
-    container_name: erp-mini-caddy
+    container_name: ${STACK:-erp-mini}-caddy
     restart: unless-stopped
     depends_on:
       - app
     ports:
-      - "80:80"
-      - "443:443"
+      # Published HTTP port: 80 for prod, 8081 for dev (set via HTTP_PORT).
+      - "${HTTP_PORT:-80}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

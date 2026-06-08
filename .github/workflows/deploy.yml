@@ -50,7 +50,6 @@ jobs:
             echo "→ Pulling latest dev"
             git fetch --prune origin dev
             git reset --hard origin/dev
-            sed -i 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma
             echo "→ Building & starting DEV stack ($STACK) on :$HTTP_PORT"
             docker compose -p "$STACK" -f docker-compose.prod.yml up -d --build
             docker image prune -f
@@ -82,7 +81,6 @@ jobs:
             echo "→ Pulling latest main"
             git fetch --prune origin main
             git reset --hard origin/main
-            sed -i 's/provider = "sqlite"/provider = "postgresql"/' prisma/schema.prisma
             echo "→ Building & starting PROD stack ($STACK) on :$HTTP_PORT"
             docker compose -p "$STACK" -f docker-compose.prod.yml up -d --build
             docker image prune -f

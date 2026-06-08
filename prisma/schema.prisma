@@ -8,7 +8,7 @@ datasource db {
   // and run `prisma migrate deploy`. The models below avoid SQLite-only and
   // Postgres-only features (no native enums, no JSON columns) so the same
   // schema works against both engines.
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 

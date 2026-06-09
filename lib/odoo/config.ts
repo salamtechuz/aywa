@@ -1,6 +1,7 @@
 import "server-only";
 
 import { db } from "@/lib/db";
+import { decryptSecret } from "./crypto";
 import type { OdooConfig } from "./types";
 
 // Resolves the Odoo connection config for a workspace. Priority:
@@ -25,7 +26,12 @@ export function connToConfig(conn: {
   username: string;
   apiKey: string;
 }): OdooConfig {
-  return { baseUrl: conn.baseUrl, db: conn.db, username: conn.username, apiKey: conn.apiKey };
+  return {
+    baseUrl: conn.baseUrl,
+    db: conn.db,
+    username: conn.username,
+    apiKey: decryptSecret(conn.apiKey),
+  };
 }
 
 export async function getActiveConnection(workspaceId: string) {

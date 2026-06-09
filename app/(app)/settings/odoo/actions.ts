@@ -8,6 +8,8 @@ import { z } from "zod";
 import { logAudit } from "@/lib/audit/log";
 import { db } from "@/lib/db";
 import { testOdooConnection as runTest } from "@/lib/odoo/client";
+import { connToConfig } from "@/lib/odoo/config";
+import { encryptSecret } from "@/lib/odoo/crypto";
 import { registry } from "@/lib/odoo/registry";
 import { pushEntity, runOdooPull } from "@/lib/odoo/sync";
 import { assertCanAdmin } from "@/lib/permissions";
@@ -50,7 +52,7 @@ export async function saveOdooConnection(input: unknown) {
         baseUrl: d.baseUrl,
         db: d.db,
         username: d.username,
-        ...(d.apiKey ? { apiKey: d.apiKey } : {}),
+        ...(d.apiKey ? { apiKey: encryptSecret(d.apiKey) } : {}),
         enabledEntities,
         active: d.active,
         webhookSecret: existing.webhookSecret ?? newSecret(),
@@ -63,7 +65,7 @@ export async function saveOdooConnection(input: unknown) {
         baseUrl: d.baseUrl,
         db: d.db,
         username: d.username,
-        apiKey: d.apiKey as string,
+        apiKey: encryptSecret(d.apiKey as string),
         enabledEntities,
         active: d.active,
         webhookSecret: newSecret(),
@@ -84,12 +86,7 @@ export async function testOdooConnectionAction() {
   const conn = await db.odooConnection.findFirst({ where: { workspaceId: ws.id } });
   if (!conn) return { ok: false as const, error: "Save the connection first" };
 
-  const result = await runTest({
-    baseUrl: conn.baseUrl,
-    db: conn.db,
-    username: conn.username,
-    apiKey: conn.apiKey,
-  });
+  const result = await runTest(connToConfig(conn));
   await db.odooConnection.update({
     where: { id: conn.id },
     data: {

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { db } from "@/lib/db";
+import { pushEntity } from "@/lib/odoo/sync";
 import { syncEntryForPurchaseOrder } from "@/lib/accounting/auto";
 import { syncStockForPurchaseOrder } from "@/lib/inventory/sync";
 import { assertCanWrite } from "@/lib/permissions";
@@ -65,6 +66,7 @@ export async function movePurchaseOrder(input: z.infer<typeof MoveSchema>) {
     revalidatePath("/accounting");
     revalidatePath("/dashboard");
   }
+  void pushEntity(ws.id, "purchase_order", orderId);
   revalidatePath("/purchase");
   return { ok: true as const };
 }
@@ -107,6 +109,7 @@ export async function createPurchaseOrder(formData: FormData) {
     },
   });
 
+  void pushEntity(ws.id, "purchase_order", created.id);
   revalidatePath("/purchase");
   return { ok: true as const, number, id: created.id };
 }
@@ -165,6 +168,7 @@ export async function updatePurchaseOrder(formData: FormData) {
     revalidatePath("/accounting");
     revalidatePath("/dashboard");
   }
+  void pushEntity(ws.id, "purchase_order", id);
   revalidatePath("/purchase");
   return { ok: true as const };
 }
@@ -222,6 +226,7 @@ export async function advancePurchaseOrder(id: string) {
     user?.name ?? user?.email ?? undefined,
   );
 
+  void pushEntity(ws.id, "purchase_order", id);
   revalidatePath("/purchase");
   revalidatePath("/inventory");
   revalidatePath("/accounting");
@@ -272,6 +277,7 @@ export async function addPurchaseLine(formData: FormData) {
   });
 
   await recomputePurchaseAmount(d.orderId);
+  void pushEntity(ws.id, "purchase_order", d.orderId);
   revalidatePath("/purchase");
   return { ok: true as const };
 }
@@ -287,6 +293,7 @@ export async function deletePurchaseLine(lineId: string) {
   if (!line) return { ok: false as const, error: "Line not found" };
   await db.purchaseOrderLine.delete({ where: { id: lineId } });
   await recomputePurchaseAmount(line.orderId);
+  void pushEntity(ws.id, "purchase_order", line.orderId);
   revalidatePath("/purchase");
   return { ok: true as const };
 }
@@ -336,6 +343,7 @@ export async function createVendor(formData: FormData) {
       notes: d.notes || null,
     },
   });
+  void pushEntity(ws.id, "vendor", created.id);
   revalidatePath("/purchase/vendors");
   revalidatePath("/purchase");
   return { ok: true as const, id: created.id };
@@ -370,6 +378,7 @@ export async function updateVendor(formData: FormData) {
       ...(d.active !== undefined ? { active: d.active } : {}),
     },
   });
+  void pushEntity(ws.id, "vendor", id);
   revalidatePath("/purchase/vendors");
   revalidatePath("/purchase");
   return { ok: true as const };

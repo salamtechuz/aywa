@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { logAudit } from "@/lib/audit/log";
 import { db } from "@/lib/db";
+import { pushEntity } from "@/lib/odoo/sync";
 import { assertCanWrite } from "@/lib/permissions";
 import { getActiveWorkspace } from "@/lib/tenant";
 
@@ -32,6 +33,7 @@ export async function bulkUpdateDealStage(input: z.infer<typeof BulkStageSchema>
     summary: `Bulk moved ${res.count} deal${res.count === 1 ? "" : "s"} to ${stage}`,
     metadata: { ids, stage },
   });
+  for (const id of ids) void pushEntity(ws.id, "deal", id);
   revalidatePath("/crm");
   return { ok: true as const, count: res.count };
 }

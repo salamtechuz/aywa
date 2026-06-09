@@ -2,13 +2,14 @@ import "server-only";
 
 import type { AnyEntityMapper } from "./types";
 import { contactMapper } from "./mappers/contact";
+import { productMapper } from "./mappers/product";
 
 // The mapper registry. To add a new synced entity later: write a mapper file
 // under ./mappers and add it to this array — the sync engine needs no changes.
 const MAPPERS: AnyEntityMapper[] = [
   contactMapper,
-  // Phase 2: productMapper, salesOrderMapper, dealMapper
-  // Phase 3: stockMapper
+  productMapper,
+  // Next: salesOrderMapper, dealMapper, stockMapper
 ];
 
 export const registry = {

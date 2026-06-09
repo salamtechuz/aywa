@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { parsePagination, requireAuth } from "@/lib/api/respond";
 import { computeOnHandMap } from "@/lib/inventory/stock";
+import { pushEntity } from "@/lib/odoo/sync";
 
 export const runtime = "nodejs";
 
@@ -77,6 +78,7 @@ export async function POST(req: NextRequest) {
   const created = await db.product.create({
     data: { ...parsed.data, workspaceId: auth.workspaceId },
   });
+  void pushEntity(auth.workspaceId, "product", created.id);
   return NextResponse.json(
     {
       data: {

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { db } from "@/lib/db";
+import { pushEntity } from "@/lib/odoo/sync";
 import { assertCanWrite } from "@/lib/permissions";
 import { getActiveWorkspace } from "@/lib/tenant";
 
@@ -34,7 +35,7 @@ export async function createProduct(formData: FormData) {
   });
   if (existing) return { ok: false as const, error: "SKU already exists" };
 
-  await db.product.create({
+  const created = await db.product.create({
     data: {
       workspaceId: ws.id,
       sku: d.sku,
@@ -48,6 +49,7 @@ export async function createProduct(formData: FormData) {
       reorderAt: d.reorderAt,
     },
   });
+  void pushEntity(ws.id, "product", created.id);
   revalidatePath("/inventory");
   return { ok: true as const };
 }
@@ -77,6 +79,7 @@ export async function updateProduct(formData: FormData) {
   if (rest.active !== undefined) data.active = rest.active;
 
   await db.product.updateMany({ where: { id, workspaceId: ws.id }, data });
+  void pushEntity(ws.id, "product", id);
   revalidatePath("/inventory");
   return { ok: true as const };
 }

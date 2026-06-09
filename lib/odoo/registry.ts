@@ -7,6 +7,8 @@ import { salesOrderMapper } from "./mappers/order";
 import { dealMapper } from "./mappers/deal";
 import { vendorMapper } from "./mappers/vendor";
 import { purchaseOrderMapper } from "./mappers/purchase";
+import { stockMapper } from "./mappers/stock";
+import { journalEntryMapper } from "./mappers/accounting";
 
 // The mapper registry. To add a new synced entity later: write a mapper file
 // under ./mappers and add it to this array — the sync engine needs no changes.
@@ -17,7 +19,8 @@ const MAPPERS: AnyEntityMapper[] = [
   dealMapper,
   vendorMapper,
   purchaseOrderMapper,
-  // Next: stockMapper (deferred — needs a live Odoo connection to validate)
+  stockMapper,
+  journalEntryMapper,
 ];
 
 export const registry = {

@@ -53,6 +53,23 @@ export type OutboundCtx = {
 };
 
 /**
+ * Context for `pushOutbound` — fully self-managed outbound for "action" entities
+ * whose Odoo side isn't a plain create/write (e.g. stock, which sets a quant's
+ * inventory_quantity and calls action_apply_inventory). The mapper owns the
+ * whole flow: its own echo-guard (getLink/saveLink) and side effects.
+ */
+export type SelfOutboundCtx = {
+  workspaceId: string;
+  client: OdooClient;
+  /** Resolve/auto-push a related local record's Odoo id (e.g. the product). */
+  odooIdFor(entityType: string, localId: string | null | undefined): Promise<number | null>;
+  /** The current OdooLink for this record, if any (for the mapper's echo-guard). */
+  getLink(): Promise<OdooLinkRef | null>;
+  /** Persist the OdooLink (odooId + content hash) after a successful push. */
+  saveLink(odooId: number, contentHash: string): Promise<void>;
+};
+
+/**
  * One self-contained entity mapping (the extensibility seam). Add a new module
  * later by writing one of these and registering it in registry.ts — the sync
  * engine drives every mapper generically and never names a concrete entity.
@@ -88,6 +105,12 @@ export interface EntityMapper<TLocal = Record<string, unknown>> {
    * (e.g. a required relation could not be resolved).
    */
   buildOutbound?(ctx: OutboundCtx, local: TLocal): Promise<Record<string, unknown> | null>;
+  /**
+   * Fully self-managed outbound for "action" entities (e.g. stock inventory
+   * adjustments). Takes precedence over buildOutbound/toOdoo; the mapper owns
+   * its echo-guard and side effects via SelfOutboundCtx.
+   */
+  pushOutbound?(ctx: SelfOutboundCtx, local: TLocal): Promise<void>;
   /** Odoo → local field mapping. Required unless pull is false. */
   fromOdoo?(rec: Record<string, unknown>): Partial<TLocal>;
 

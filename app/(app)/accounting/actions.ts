@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { logAudit } from "@/lib/audit/log";
 import { db } from "@/lib/db";
+import { pushEntity } from "@/lib/odoo/sync";
 import { assertCanWrite } from "@/lib/permissions";
 import { getActiveWorkspace, getCurrentUser } from "@/lib/tenant";
 import { ACCOUNT_TYPE_IDS, JOURNAL_TYPE_IDS, isBalanced, round2 } from "@/lib/accounting/stages";
@@ -257,6 +258,7 @@ export async function createEntry(input: z.infer<typeof CreateEntrySchema>) {
     entityId: created.id,
     summary: `Created journal entry ${number}${d.status === "POSTED" ? " (posted)" : ""}`,
   });
+  void pushEntity(ws.id, "journal_entry", created.id);
   revalidatePath("/accounting");
   return { ok: true as const, id: created.id, number };
 }
@@ -315,6 +317,7 @@ export async function updateEntry(input: z.infer<typeof UpdateEntrySchema>) {
       },
     }),
   ]);
+  void pushEntity(ws.id, "journal_entry", d.id);
   revalidatePath("/accounting");
   return { ok: true as const };
 }
@@ -347,6 +350,7 @@ export async function postEntry(id: string) {
     entityId: id,
     summary: `Posted journal entry ${entry.number}`,
   });
+  void pushEntity(ws.id, "journal_entry", id);
   revalidatePath("/accounting");
   return { ok: true as const };
 }

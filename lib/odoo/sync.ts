@@ -116,6 +116,31 @@ async function pushEntityImpl(
     const local = await mapper.aywaGet(workspaceId, localId);
     if (!local) return;
 
+    // Self-managed "action" entities (e.g. stock) own their entire outbound.
+    if (mapper.pushOutbound) {
+      const client = await getOdooClient(config);
+      await mapper.pushOutbound(
+        {
+          workspaceId,
+          client,
+          odooIdFor: (et, id) => odooIdForLocal(workspaceId, et, id),
+          getLink: () => resolveLinkByLocal(workspaceId, entityType, localId),
+          saveLink: (odooId, contentHash) =>
+            upsertLink({
+              workspaceId,
+              entityType,
+              localId,
+              odooModel: mapper.odooModel,
+              odooId,
+              contentHash,
+              origin: "OUTBOUND",
+            }),
+        },
+        local,
+      );
+      return;
+    }
+
     const link = await resolveLinkByLocal(workspaceId, entityType, localId);
 
     // Build the Odoo payload. The async builder (relation resolution) takes

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import type { QuotePdfData } from "@/components/sales/quote-pdf-template";
 import { publicUrlFor } from "@/lib/attachments/storage-public";
 import { db } from "@/lib/db";
+import { pushEntity } from "@/lib/odoo/sync";
 import { EMAIL_FROM, getResend, isEmailEnabled } from "@/lib/email/resend";
 import { assertCanWrite } from "@/lib/permissions";
 import { getActiveWorkspace, getCurrentUser } from "@/lib/tenant";
@@ -176,6 +177,7 @@ export async function sendQuoteEmail(
       where: { id: order.id },
       data: { status: "SENT" },
     });
+    void pushEntity(ws.id, "order", order.id);
   }
 
   if (messageId) {

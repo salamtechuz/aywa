@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { logAudit } from "@/lib/audit/log";
 import { db } from "@/lib/db";
+import { pushEntity } from "@/lib/odoo/sync";
 import { syncEntryForSalesOrder } from "@/lib/accounting/auto";
 import { syncStockForSalesOrder } from "@/lib/inventory/sync";
 import { assertCanWrite } from "@/lib/permissions";
@@ -80,6 +81,7 @@ export async function moveOrder(input: z.infer<typeof MoveSchema>) {
     revalidatePath("/accounting");
     revalidatePath("/dashboard");
   }
+  void pushEntity(ws.id, "order", orderId);
   revalidatePath("/sales");
   return { ok: true as const };
 }
@@ -136,6 +138,7 @@ export async function createQuote(formData: FormData) {
     amount: created.amount,
     status: created.status,
   });
+  void pushEntity(ws.id, "order", created.id);
 
   revalidatePath("/sales");
   return { ok: true as const, number };
@@ -196,6 +199,7 @@ export async function updateOrder(formData: FormData) {
     revalidatePath("/accounting");
     revalidatePath("/dashboard");
   }
+  void pushEntity(ws.id, "order", id);
   revalidatePath("/sales");
   return { ok: true as const };
 }
@@ -249,6 +253,7 @@ export async function advanceOrder(id: string) {
     user?.name ?? user?.email ?? undefined,
   );
 
+  void pushEntity(ws.id, "order", id);
   revalidatePath("/sales");
   revalidatePath("/inventory");
   revalidatePath("/accounting");

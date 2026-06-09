@@ -72,11 +72,39 @@ export async function pushEntity(
   entityType: string,
   localId: string,
 ): Promise<void> {
+  return pushEntityImpl(workspaceId, entityType, localId, false);
+}
+
+/**
+ * Resolve a related local record to its Odoo id for an outbound payload,
+ * pushing it to Odoo first if it isn't linked yet. Dependencies bypass the
+ * enabled-entity gate (`force`): an order's customer/products must exist in
+ * Odoo for the order to be created, regardless of their own toggles.
+ */
+async function odooIdForLocal(
+  workspaceId: string,
+  entityType: string,
+  localId: string | null | undefined,
+): Promise<number | null> {
+  if (!localId) return null;
+  const existing = await resolveLinkByLocal(workspaceId, entityType, localId);
+  if (existing) return existing.odooId;
+  await pushEntityImpl(workspaceId, entityType, localId, true);
+  const after = await resolveLinkByLocal(workspaceId, entityType, localId);
+  return after?.odooId ?? null;
+}
+
+async function pushEntityImpl(
+  workspaceId: string,
+  entityType: string,
+  localId: string,
+  force: boolean,
+): Promise<void> {
   try {
     const conn = await getActiveConnection(workspaceId);
     let config: OdooConfig | null;
     if (conn) {
-      if (!enabledEntitySet(conn.enabledEntities).has(entityType)) return;
+      if (!force && !enabledEntitySet(conn.enabledEntities).has(entityType)) return;
       config = connToConfig(conn);
     } else {
       config = envConfig();
@@ -88,12 +116,35 @@ export async function pushEntity(
     const local = await mapper.aywaGet(workspaceId, localId);
     if (!local) return;
 
-    const odooFields = mapper.toOdoo(local);
-    const hash = hashPayload(odooFields);
     const link = await resolveLinkByLocal(workspaceId, entityType, localId);
+
+    // Build the Odoo payload. The async builder (relation resolution) takes
+    // precedence and needs the client up front; the pure path stays lazy so an
+    // echo-guarded no-op never has to authenticate.
+    let odooFields: Record<string, unknown> | null;
+    let client: OdooClient | null = null;
+    if (mapper.buildOutbound) {
+      client = await getOdooClient(config);
+      odooFields = await mapper.buildOutbound(
+        {
+          workspaceId,
+          client,
+          mode: link ? "update" : "create",
+          odooIdFor: (et, id) => odooIdForLocal(workspaceId, et, id),
+        },
+        local,
+      );
+    } else if (mapper.toOdoo) {
+      odooFields = mapper.toOdoo(local);
+    } else {
+      return; // misconfigured mapper: no outbound mapping defined
+    }
+    if (!odooFields) return; // builder asked to skip this record
+
+    const hash = hashPayload(odooFields);
     if (link && link.contentHash === hash) return; // no-op / echo guard
 
-    const client = await getOdooClient(config);
+    if (!client) client = await getOdooClient(config);
     let odooId: number;
     if (link) {
       await client.write(mapper.odooModel, [link.odooId], odooFields);
@@ -127,6 +178,8 @@ export async function applyFromOdoo(
   rec?: Record<string, unknown>,
 ): Promise<void> {
   const { workspaceId, client } = ctx;
+  const { fromOdoo, aywaUpsert } = mapper;
+  if (!fromOdoo || !aywaUpsert) return; // outbound-only entity — nothing to apply
   const record =
     rec ??
     (await client.searchRead(mapper.odooModel, [["id", "=", odooId]], mapper.odooFields, {
@@ -134,7 +187,7 @@ export async function applyFromOdoo(
     }))[0];
   if (!record) return;
 
-  const localData = mapper.fromOdoo(record);
+  const localData = fromOdoo(record);
   const hash = hashPayload(localData as Record<string, unknown>);
 
   const existing = await resolveLinkByOdoo(workspaceId, mapper.entityType, odooId);
@@ -149,7 +202,7 @@ export async function applyFromOdoo(
     if (matchedLocalId) linkRef = { localId: matchedLocalId, odooId, contentHash: "" };
   }
 
-  const localId = await mapper.aywaUpsert(workspaceId, localData, linkRef);
+  const localId = await aywaUpsert(workspaceId, localData, linkRef);
   await upsertLink({
     workspaceId,
     entityType: mapper.entityType,
@@ -170,12 +223,9 @@ export async function applyOdooRecord(
   const conn = await getActiveConnection(workspaceId);
   const config = conn ? connToConfig(conn) : envConfig();
   if (!config) return false;
-  if (conn) {
-    const mapper = registry.byOdooModel(odooModel);
-    if (!mapper || !enabledEntitySet(conn.enabledEntities).has(mapper.entityType)) return false;
-  }
   const mapper = registry.byOdooModel(odooModel);
-  if (!mapper) return false;
+  if (!mapper || mapper.pull === false) return false; // unknown or outbound-only
+  if (conn && !enabledEntitySet(conn.enabledEntities).has(mapper.entityType)) return false;
   const client = await getOdooClient(config);
   await applyFromOdoo({ workspaceId, client }, mapper, odooId);
   return true;
@@ -200,6 +250,7 @@ export async function runOdooPull(
   const entities: Record<string, number> = {};
 
   for (const mapper of registry.all()) {
+    if (mapper.pull === false) continue; // outbound-only entity
     if (!enabled.has(mapper.entityType)) continue;
     const domain = since ? [["write_date", ">", since]] : [];
     const recs = await client.searchRead(mapper.odooModel, domain, mapper.odooFields, {

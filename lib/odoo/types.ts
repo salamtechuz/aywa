@@ -35,6 +35,24 @@ export type OdooLinkRef = {
 };
 
 /**
+ * Context handed to `buildOutbound` for entities whose Odoo payload needs the
+ * live client or cross-entity link resolution (e.g. an order's partner_id and
+ * order_line product ids).
+ */
+export type OutboundCtx = {
+  workspaceId: string;
+  client: OdooClient;
+  /** "create" when no OdooLink exists yet, "update" when updating a linked record. */
+  mode: "create" | "update";
+  /**
+   * Resolve a related local record to its Odoo id, pushing it to Odoo first if
+   * it isn't linked yet (so pushing an order auto-pushes its customer/products).
+   * Returns null when the relation is empty or can't be resolved.
+   */
+  odooIdFor(entityType: string, localId: string | null | undefined): Promise<number | null>;
+};
+
+/**
  * One self-contained entity mapping (the extensibility seam). Add a new module
  * later by writing one of these and registering it in registry.ts — the sync
  * engine drives every mapper generically and never names a concrete entity.
@@ -48,16 +66,30 @@ export interface EntityMapper<TLocal = Record<string, unknown>> {
   label: string; // "Contacts"
   /** Fields to request from Odoo in search_read (always include "write_date"). */
   odooFields: string[];
+  /**
+   * If false, the cron + webhook pull skips this entity — it syncs aywa → Odoo
+   * only. Used by entities (e.g. orders) whose inbound path needs reverse
+   * relation resolution we defer to a later phase. Defaults to true (two-way).
+   */
+  pull?: boolean;
 
   // --- aywa side: generic CRUD the engine drives ---
   aywaGet(workspaceId: string, localId: string): Promise<TLocal | null>;
   aywaList(workspaceId: string, opts?: { updatedAfter?: Date }): Promise<TLocal[]>;
-  /** Upsert a local record from inbound data; returns the local id. */
-  aywaUpsert(workspaceId: string, data: Partial<TLocal>, link: OdooLinkRef | null): Promise<string>;
+  /** Upsert a local record from inbound data; returns the local id. Required unless pull is false. */
+  aywaUpsert?(workspaceId: string, data: Partial<TLocal>, link: OdooLinkRef | null): Promise<string>;
 
-  // --- pure field mapping ---
-  toOdoo(local: TLocal): Record<string, unknown>;
-  fromOdoo(rec: Record<string, unknown>): Partial<TLocal>;
+  // --- field mapping: pure (toOdoo) OR async with relation resolution (buildOutbound) ---
+  /** Pure local → Odoo field mapping. Define this OR buildOutbound. */
+  toOdoo?(local: TLocal): Record<string, unknown>;
+  /**
+   * Async outbound builder for entities needing the client or related Odoo ids.
+   * Takes precedence over toOdoo when present. Return null to skip the push
+   * (e.g. a required relation could not be resolved).
+   */
+  buildOutbound?(ctx: OutboundCtx, local: TLocal): Promise<Record<string, unknown> | null>;
+  /** Odoo → local field mapping. Required unless pull is false. */
+  fromOdoo?(rec: Record<string, unknown>): Partial<TLocal>;
 
   // --- identity matching (dedup when no OdooLink exists yet) ---
   matchOdoo?(client: OdooClient, local: TLocal): Promise<number | null>;

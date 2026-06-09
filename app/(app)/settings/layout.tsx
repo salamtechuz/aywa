@@ -15,6 +15,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     { label: t("tabBilling"), href: "/settings/billing" },
     { label: t("tabAppearance"), href: "/settings/appearance" },
     { label: "Developer", href: "/settings/developer" },
+    { label: "Odoo", href: "/settings/odoo" },
     { label: "Audit log", href: "/settings/audit" },
   ];
 

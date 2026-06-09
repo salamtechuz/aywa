@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { db } from "@/lib/db";
+import { pushEntity } from "@/lib/odoo/sync";
 import { getActiveWorkspace } from "@/lib/tenant";
 
 const CreateSchema = z.object({
@@ -22,7 +23,7 @@ export async function createCustomer(formData: FormData) {
     return { ok: false as const, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   const d = parsed.data;
-  await db.contact.create({
+  const created = await db.contact.create({
     data: {
       workspaceId: ws.id,
       name: d.name,
@@ -32,6 +33,7 @@ export async function createCustomer(formData: FormData) {
       type: d.type,
     },
   });
+  void pushEntity(ws.id, "contact", created.id);
   revalidatePath("/crm/customers");
   return { ok: true as const };
 }
@@ -57,6 +59,7 @@ export async function updateCustomer(formData: FormData) {
     where: { id, workspaceId: ws.id },
     data,
   });
+  void pushEntity(ws.id, "contact", id);
   revalidatePath("/crm/customers");
   return { ok: true as const };
 }

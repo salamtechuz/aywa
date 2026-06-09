@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { db } from "@/lib/db";
 import { parsePagination, requireAuth } from "@/lib/api/respond";
+import { pushEntity } from "@/lib/odoo/sync";
 
 export const runtime = "nodejs";
 
@@ -54,6 +55,7 @@ export async function POST(req: NextRequest) {
   const created = await db.contact.create({
     data: { ...parsed.data, workspaceId: auth.workspaceId },
   });
+  void pushEntity(auth.workspaceId, "contact", created.id);
   return NextResponse.json({ data: serialize(created) }, { status: 201 });
 }
 

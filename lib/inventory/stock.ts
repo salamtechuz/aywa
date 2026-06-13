@@ -79,8 +79,8 @@ export type CreateMovementInput = {
  * in sync. Pass already-signed quantities (OUT should be negative).
  */
 export async function recordMovement(input: CreateMovementInput) {
-  return db.$transaction(async (tx) => {
-    const movement = await tx.stockMovement.create({
+  const movement = await db.$transaction(async (tx) => {
+    const m = await tx.stockMovement.create({
       data: {
         workspaceId: input.workspaceId,
         productId: input.productId,
@@ -97,8 +97,17 @@ export async function recordMovement(input: CreateMovementInput) {
       where: { id: input.productId },
       data: { stockOnHand: { increment: Math.round(input.quantity) } },
     });
-    return movement;
+    return m;
   });
+
+  // Fire-and-forget Odoo stock sync (the single choke point for every stock
+  // change). Lazy import avoids a static cycle: odoo/sync → registry → the
+  // stock mapper → @/lib/inventory/stock. pushEntity never throws.
+  void import("@/lib/odoo/sync")
+    .then(({ pushEntity }) => pushEntity(input.workspaceId, "stock", input.productId))
+    .catch(() => {});
+
+  return movement;
 }
 
 /**

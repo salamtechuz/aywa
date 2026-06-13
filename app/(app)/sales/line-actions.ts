@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { db } from "@/lib/db";
+import { pushEntity } from "@/lib/odoo/sync";
 import { getActiveWorkspace } from "@/lib/tenant";
 
 // Recompute the order's total amount from its line items.
@@ -71,6 +72,7 @@ export async function addLine(input: z.infer<typeof AddLineSchema>) {
   });
 
   await recomputeAmount(d.orderId);
+  void pushEntity(ws.id, "order", d.orderId);
   revalidatePath("/sales");
   return { ok: true as const };
 }
@@ -97,6 +99,7 @@ export async function updateLine(input: z.infer<typeof UpdateLineSchema>) {
 
   await db.salesOrderLine.update({ where: { id }, data: rest });
   await recomputeAmount(line.orderId);
+  void pushEntity(ws.id, "order", line.orderId);
   revalidatePath("/sales");
   return { ok: true as const };
 }
@@ -109,6 +112,7 @@ export async function deleteLine(id: string) {
   if (!line) return { ok: false as const, error: "Line not found" };
   await db.salesOrderLine.delete({ where: { id } });
   await recomputeAmount(line.orderId);
+  void pushEntity(ws.id, "order", line.orderId);
   revalidatePath("/sales");
   return { ok: true as const };
 }

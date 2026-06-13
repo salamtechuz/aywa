@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { db } from "@/lib/db";
+import { pushEntity } from "@/lib/odoo/sync";
 import { assertCanWrite } from "@/lib/permissions";
 import { getActiveWorkspace } from "@/lib/tenant";
 import { deliverWebhook } from "@/lib/webhooks/deliver";
@@ -59,6 +60,7 @@ export async function moveDeal(input: z.infer<typeof MoveDealSchema>) {
     void deliverWebhook(ws.id, "deal.lost", { id: dealId, name: current.name, value: current.value });
   }
 
+  void pushEntity(ws.id, "deal", dealId);
   revalidatePath("/crm");
   return { ok: true as const };
 }
@@ -91,7 +93,7 @@ export async function createDeal(formData: FormData) {
     _max: { position: true },
   });
 
-  await db.deal.create({
+  const created = await db.deal.create({
     data: {
       workspaceId: ws.id,
       name: d.name,
@@ -108,6 +110,7 @@ export async function createDeal(formData: FormData) {
     },
   });
 
+  void pushEntity(ws.id, "deal", created.id);
   revalidatePath("/crm");
   return { ok: true as const };
 }
@@ -146,6 +149,7 @@ export async function updateDeal(formData: FormData) {
     where: { id, workspaceId: ws.id },
     data,
   });
+  void pushEntity(ws.id, "deal", id);
   revalidatePath("/crm");
   return { ok: true as const };
 }
@@ -177,6 +181,7 @@ export async function convertLead(id: string) {
       stage: deal.stage === "NEW" ? "QUALIFIED" : deal.stage,
     },
   });
+  void pushEntity(ws.id, "deal", id);
   revalidatePath("/crm");
   return { ok: true as const };
 }

@@ -146,6 +146,56 @@ model WebhookEndpoint {
   @@index([workspaceId, active])
 }
 
+/// Per-workspace connection to an Odoo instance for the bidirectional sync.
+/// apiKey is stored as-is (it must be replayable on every Odoo call) — same
+/// posture as WebhookEndpoint.secret. Scoped by workspaceId with no FK relation,
+/// matching the domain-model convention (Contact/Product/Vehicle).
+model OdooConnection {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  baseUrl         String   // e.g. https://agrifoods-test.odoo.com
+  db              String   // Odoo database name
+  username        String   // login email that owns the API key
+  apiKey          String   // Odoo API key (plaintext — see hardening note)
+  active          Boolean  @default(false)
+  /// Comma-separated entityTypes to sync, e.g. "contact,product,sales_order".
+  enabledEntities String   @default("")
+  /// Shared secret for the inbound Odoo webhook receiver (verified per request).
+  webhookSecret   String?
+  /// Incremental-pull cursor: last Odoo write_date watermark pulled (ISO string).
+  lastPullAt      String?
+  lastTestAt      DateTime?
+  lastTestOk      Boolean?
+  lastTestError   String?
+  createdBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([workspaceId])
+  @@index([workspaceId, active])
+}
+
+/// Maps an aywa record (cuid) to its Odoo counterpart (integer id) per
+/// entityType, with a content hash that suppresses echo loops during sync.
+/// The two unique indexes let lookups go either direction without duplicates.
+model OdooLink {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  entityType   String   // "contact" | "product" | "sales_order" | "deal" | ...
+  localId      String   // aywa cuid (Contact.id, Product.id, ...)
+  odooModel    String   // "res.partner", "product.template", "sale.order", ...
+  odooId       Int      // Odoo database id
+  contentHash  String   // sha256 of the last-synced mapped payload
+  origin       String   @default("OUTBOUND") // OUTBOUND | INBOUND (diagnostics)
+  lastSyncedAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([workspaceId, entityType, localId])
+  @@unique([workspaceId, entityType, odooId])
+  @@index([workspaceId, entityType])
+}
+
 model Membership {
   id          String   @id @default(cuid())
   userId      String

@@ -30,6 +30,7 @@ export type AuditEntityType =
   | "OPERATION_TYPE"
   | "STORAGE_CATEGORY"
   | "UNIT_OF_MEASURE"
+  | "ODOO"
   | "OTHER";
 
 export type AuditInput = {

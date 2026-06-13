@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import type { PoPdfData } from "@/components/purchase/po-pdf-template";
 import { publicUrlFor } from "@/lib/attachments/storage-public";
 import { db } from "@/lib/db";
+import { pushEntity } from "@/lib/odoo/sync";
 import { EMAIL_FROM, getResend, isEmailEnabled } from "@/lib/email/resend";
 import { assertCanWrite } from "@/lib/permissions";
 import { getActiveWorkspace, getCurrentUser } from "@/lib/tenant";
@@ -135,6 +136,7 @@ export async function sendRfqEmail(input: SendRfqInput): Promise<SendRfqResult> 
       where: { id: order.id },
       data: { status: "RFQ_SENT" },
     });
+    void pushEntity(ws.id, "purchase_order", order.id);
   }
 
   if (messageId) {
